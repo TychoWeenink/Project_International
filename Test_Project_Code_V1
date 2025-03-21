@@ -1,0 +1,75 @@
+#define LED_SUPPORT D2
+#define LED_EMERGENCY D3
+#define LED_ON D4
+#define BUTTON_START D5
+#define BUTTON_SIT D6
+#define BUTTON_EMERGENCY D7
+#define END_SWITCH_1 D8 //Max rotation
+#define END_SWITCH_2 D9 //Min rotation
+#define RPWM D10
+#define LPWM D14
+#define POT_RANGE A0
+#define POT_SPEED A1
+
+// Snelheidsniveaus (4 standen)
+const int SPEED_LEVELS[4] = {64, 128, 192, 255};
+
+void setup() {
+    pinMode(LED_SUPPORT, OUTPUT);
+    pinMode(LED_EMERGENCY, OUTPUT);
+    pinMode(LED_ON, OUTPUT);
+
+    pinMode(BUTTON_START, INPUT_PULLUP);
+    pinMode(BUTTON_SIT, INPUT_PULLUP);
+    pinMode(BUTTON_EMERGENCY, INPUT_PULLUP);
+
+    pinMode(END_SWITCH_1, INPUT_PULLUP);
+    pinMode(END_SWITCH_2, INPUT_PULLUP);
+
+    pinMode(RPWM, OUTPUT);
+    pinMode(LPWM, OUTPUT);
+}
+
+void loop() {
+    int rangeValue = analogRead(POT_RANGE);  // Range setting (0-1023)
+    int speedValue = analogRead(POT_SPEED);  // Speed setting (0-1023)
+    int speedIndex = map(speedValue, 0, 1023, 0, 3);  // 4 settings
+    int motorSpeed = SPEED_LEVELS[speedIndex];
+
+    // Start- and sitbutton controle
+    bool startPressed = !digitalRead(BUTTON_START);
+    bool sitPressed = !digitalRead(BUTTON_SIT);
+    bool emergencyPressed = !digitalRead(BUTTON_EMERGENCY);
+
+    // Endswitch controle
+    bool endSwitch1Pressed = !digitalRead(END_SWITCH_1);
+
+    if (emergencyPressed) {
+        // Emergency activated
+        stopMotor();
+        digitalWrite(LED_EMERGENCY, HIGH);
+    } else if (startPressed && sitPressed) {
+        digitalWrite(LED_ON, HIGH);
+        runMotor(motorSpeed, map(rangeValue, 0, 1023, 1000, 10000)); // Potentiometer 0,1023 -- time in ms(1s), time in ms(10s).
+    } else {
+        stopMotor();
+        digitalWrite(LED_ON, LOW);
+    }
+
+    // Endswitch safety
+    if (endSwitch1Pressed) {
+        stopMotor();
+    }
+}
+
+void runMotor(int speed, int runTime) {
+    analogWrite(RPWM, speed);
+    analogWrite(LPWM, 0);
+    delay(runTime);
+    stopMotor();
+}
+
+void stopMotor() {
+    analogWrite(RPWM, 0);
+    analogWrite(LPWM, 0);
+}
