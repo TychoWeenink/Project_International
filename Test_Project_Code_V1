@@ -50,7 +50,7 @@ void loop() {
         digitalWrite(LED_EMERGENCY, HIGH);
     } else if (startPressed && sitPressed) {
         digitalWrite(LED_ON, HIGH);
-        runMotor(motorSpeed, map(rangeValue, 0, 1023, 1000, 10000)); // Potentiometer 0,1023 -- time in ms(1s), time in ms(10s).
+        runMotor(motorSpeed, map(rangeValue, 0, 1023, 1000, 10000)); // Potentiometer range (0,1023) -- time in ms(1s), time in ms(10s).
     } else {
         stopMotor();
         digitalWrite(LED_ON, LOW);
