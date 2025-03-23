@@ -10,82 +10,142 @@
 #define RPWM             10   // R_PWM (IBT-2) (D10)
 #define LPWM             14   // L_PWM (IBT-2) (D14)
 #define POT_RANGE        A0   // Range of Motion Potentiometer (A0)
-#define POT_SPEED        A1   // Potentiometer voor snelheidsinstelling (A1)
+#define POT_SPEED        A1   // Potentiometer voor snelheidsinstelling (optioneel, hier niet gebruikt)
+
+enum State {
+  STATE_IDLE = 0,      // Rust: wachten op start (startknop + end switch 2)
+  STATE_STRETCH,       // Strekken: motor vooruit draaien (Support LED aan) tot end switch 1 ingedrukt
+  STATE_RETURN,        // Terug: wachten op sit-knop, daarna motor achteruit draaien
+  STATE_EMERGENCY      // Noodstop: motor stopt, noodstop LED aan
+};
+
+int currentState = STATE_IDLE;
+unsigned long emergencyRecoveryStart = 0;
+
+// Snelheidsinstellingen
+const int FORWARD_SPEED = 200;
+const int REVERSE_SPEED = 200;
 
 void setup() {
-  // Stel de LED-pinnen in als output
+  // Initialiseer LED-pinnen
   pinMode(LED_SUPPORT, OUTPUT);
   pinMode(LED_EMERGENCY, OUTPUT);
   pinMode(LED_ON, OUTPUT);
   
-  // Stel knoppen en eindschakelaars in als input met interne pull-up
+  // Initialiseer knoppen met interne pull-ups
   pinMode(BUTTON_START, INPUT_PULLUP);
   pinMode(BUTTON_SIT, INPUT_PULLUP);
   pinMode(BUTTON_EMERGENCY, INPUT_PULLUP);
+
+  // Initialiseer eindschakelaars met interne pull-ups
   pinMode(END_SWITCH_1, INPUT_PULLUP);
   pinMode(END_SWITCH_2, INPUT_PULLUP);
-  
-  // Stel motorbesturingspinnen in als output
+
+  // Motorbesturing
   pinMode(RPWM, OUTPUT);
   pinMode(LPWM, OUTPUT);
   
   Serial.begin(9600);
-  Serial.println("Test Systeem gestart");
+  Serial.println("Systeem gestart");
   
-  // Zet LED_ON direct aan om aan te geven dat het systeem opstart
+  // LED_ON gaat direct aan bij opstarten
   digitalWrite(LED_ON, HIGH);
 }
 
 void loop() {
-  // Lees de knoppen (actief laag, dus omgekeerd)
-  bool buttonStart     = !digitalRead(BUTTON_START);
-  bool buttonSit       = !digitalRead(BUTTON_SIT);
-  bool buttonEmergency = !digitalRead(BUTTON_EMERGENCY);
+  // Lees de knoppen en eindschakelaars (actief laag)
+  bool startPressed      = !digitalRead(BUTTON_START);
+  bool sitPressed        = !digitalRead(BUTTON_SIT);
+  bool emergencyPressed  = !digitalRead(BUTTON_EMERGENCY);
+  bool endSwitch1Pressed = !digitalRead(END_SWITCH_1);
+  bool endSwitch2Pressed = !digitalRead(END_SWITCH_2);
   
-  // Lees de eindschakelaars (actief laag)
-  bool endSwitch1 = !digitalRead(END_SWITCH_1);
-  bool endSwitch2 = !digitalRead(END_SWITCH_2);
-  
-  // Lees de potentiometers
-  int potRangeValue = analogRead(POT_RANGE);
-  int potSpeedValue = analogRead(POT_SPEED);
-  
-  // Report de status in de Serial Monitor
-  Serial.print("Start: "); Serial.print(buttonStart);
-  Serial.print(" | Sit: "); Serial.print(buttonSit);
-  Serial.print(" | Emergency: "); Serial.print(buttonEmergency);
-  Serial.print(" | EndSwitch1: "); Serial.print(endSwitch1);
-  Serial.print(" | EndSwitch2: "); Serial.print(endSwitch2);
-  Serial.print(" | PotRange: "); Serial.print(potRangeValue);
-  Serial.print(" | PotSpeed: "); Serial.println(potSpeedValue);
-  
-  // Test motoruitgangen:
-  // Als de startknop ingedrukt is, draai de motor voorwaarts op een half vermogen (PWM 128)
-  if (buttonStart) {
-    analogWrite(RPWM, 128);  // Voorwaarts
-    analogWrite(LPWM, 0);
-    Serial.println("Motor: Voorwaarts");
-  } else {
-    analogWrite(RPWM, 0);
-    analogWrite(LPWM, 0);
-  }
-  
-  // LED-test:
-  // LED_SUPPORT: gaat aan als de sit-knop ingedrukt is
-  if (buttonSit) {
-    digitalWrite(LED_SUPPORT, HIGH);
-  } else {
-    digitalWrite(LED_SUPPORT, LOW);
-  }
-  
-  // LED_EMERGENCY: gaat aan als de noodstop ingedrukt is
-  if (buttonEmergency) {
+  // Noodstop controle, altijd prioriteit
+  if (emergencyPressed && currentState != STATE_EMERGENCY) {
+    currentState = STATE_EMERGENCY;
+    Serial.println("Noodstop ingeschakeld! Overgang naar STATE_EMERGENCY.");
+    stopMotor();
     digitalWrite(LED_EMERGENCY, HIGH);
-  } else {
-    digitalWrite(LED_EMERGENCY, LOW);
   }
   
-  // LED_ON staat standaard aan (bij opstarten) en wordt hier niet aangepast
+  // State machine
+  switch(currentState) {
+    case STATE_IDLE:
+      Serial.println("STATE_IDLE: Systeem in rust.");
+      // Wacht op start: startknop moet ingedrukt zijn EN end switch 2 (D9) actief zijn
+      if (startPressed && endSwitch2Pressed) {
+        currentState = STATE_STRETCH;
+        Serial.println("Overgang naar STATE_STRETCH: Begin strekken van been.");
+        digitalWrite(LED_SUPPORT, HIGH);
+      }
+      break;
+      
+    case STATE_STRETCH:
+      Serial.println("STATE_STRETCH: Motor draait vooruit (strekken).");
+      // Motor vooruit draaien
+      analogWrite(RPWM, FORWARD_SPEED);
+      analogWrite(LPWM, 0);
+      // Wanneer end switch 1 (D8) ingedrukt wordt, is het strekken klaar
+      if (endSwitch1Pressed) {
+        stopMotor();
+        Serial.println("Eind switch 1 geactiveerd, strekken voltooid.");
+        currentState = STATE_RETURN;
+      }
+      break;
+      
+    case STATE_RETURN:
+      Serial.println("STATE_RETURN: Wachten op sit-knop om been terug te draaien.");
+      // Wacht op de sit-knop
+      if (sitPressed) {
+        Serial.println("Sit-knop ingedrukt, motor draait achteruit.");
+        // Motor achteruit draaien (bijv. voor 2 seconden)
+        analogWrite(RPWM, 0);
+        analogWrite(LPWM, REVERSE_SPEED);
+        delay(2000);
+        stopMotor();
+        digitalWrite(LED_SUPPORT, LOW);
+        Serial.println("Terugdraaien voltooid, terug naar STATE_IDLE.");
+        currentState = STATE_IDLE;
+      }
+      break;
+      
+    case STATE_EMERGENCY:
+      Serial.println("STATE_EMERGENCY: Noodstop actief, motor uit.");
+      stopMotor();
+      digitalWrite(LED_EMERGENCY, HIGH);
+      // Herstelprocedure: als de startknop gedurende 2 seconden ingedrukt blijft
+      if (startPressed) {
+        if (emergencyRecoveryStart == 0) {
+          emergencyRecoveryStart = millis();
+          Serial.println("Herstelpoging gestart, houd startknop ingedrukt.");
+        } else if (millis() - emergencyRecoveryStart >= 2000) {
+          Serial.println("Herstel bevestigd, motor draait achteruit tot herstel.");
+          // Motor achteruit draaien totdat een herstelvoorwaarde is bereikt.
+          // Hier gebruiken we een vaste reverse-beweging (bijv. 2 seconden) als voorbeeld.
+          analogWrite(RPWM, 0);
+          analogWrite(LPWM, REVERSE_SPEED);
+          delay(2000);
+          stopMotor();
+          digitalWrite(LED_EMERGENCY, LOW);
+          emergencyRecoveryStart = 0;
+          currentState = STATE_IDLE;
+          Serial.println("Herstel voltooid, terug naar STATE_IDLE.");
+        }
+      } else {
+        emergencyRecoveryStart = 0;
+      }
+      break;
+      
+    default:
+      currentState = STATE_IDLE;
+      break;
+  }
   
-  delay(200); // korte pauze voor leesbaarheid in de Serial Monitor
+  delay(200);
+}
+
+void stopMotor() {
+  analogWrite(RPWM, 0);
+  analogWrite(LPWM, 0);
+  Serial.println("Motor uitgeschakeld");
 }
