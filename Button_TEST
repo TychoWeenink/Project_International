@@ -1,0 +1,91 @@
+// Pin definities (numerieke waarden voor de Arduino Pro Micro)
+#define LED_SUPPORT      2    // Indicator LED Support ON (D2)
+#define LED_EMERGENCY    3    // Indicator LED Emergency Stop (D3)
+#define LED_ON           4    // Indicator LED ON (D4)
+#define BUTTON_START     5    // Button Start (D5)
+#define BUTTON_SIT       6    // Button Sit (D6)
+#define BUTTON_EMERGENCY 7    // Button Emergency Stop (D7)
+#define END_SWITCH_1     8    // End switch 1 (Max rotation) (D8)
+#define END_SWITCH_2     9    // End switch 2 (Min rotation) (D9)
+#define RPWM             10   // R_PWM (IBT-2) (D10)
+#define LPWM             14   // L_PWM (IBT-2) (D14)
+#define POT_RANGE        A0   // Range of Motion Potentiometer (A0)
+#define POT_SPEED        A1   // Potentiometer voor snelheidsinstelling (A1)
+
+void setup() {
+  // Stel de LED-pinnen in als output
+  pinMode(LED_SUPPORT, OUTPUT);
+  pinMode(LED_EMERGENCY, OUTPUT);
+  pinMode(LED_ON, OUTPUT);
+  
+  // Stel knoppen en eindschakelaars in als input met interne pull-up
+  pinMode(BUTTON_START, INPUT_PULLUP);
+  pinMode(BUTTON_SIT, INPUT_PULLUP);
+  pinMode(BUTTON_EMERGENCY, INPUT_PULLUP);
+  pinMode(END_SWITCH_1, INPUT_PULLUP);
+  pinMode(END_SWITCH_2, INPUT_PULLUP);
+  
+  // Stel motorbesturingspinnen in als output
+  pinMode(RPWM, OUTPUT);
+  pinMode(LPWM, OUTPUT);
+  
+  Serial.begin(9600);
+  Serial.println("Test Systeem gestart");
+  
+  // Zet LED_ON direct aan om aan te geven dat het systeem opstart
+  digitalWrite(LED_ON, HIGH);
+}
+
+void loop() {
+  // Lees de knoppen (actief laag, dus omgekeerd)
+  bool buttonStart     = !digitalRead(BUTTON_START);
+  bool buttonSit       = !digitalRead(BUTTON_SIT);
+  bool buttonEmergency = !digitalRead(BUTTON_EMERGENCY);
+  
+  // Lees de eindschakelaars (actief laag)
+  bool endSwitch1 = !digitalRead(END_SWITCH_1);
+  bool endSwitch2 = !digitalRead(END_SWITCH_2);
+  
+  // Lees de potentiometers
+  int potRangeValue = analogRead(POT_RANGE);
+  int potSpeedValue = analogRead(POT_SPEED);
+  
+  // Report de status in de Serial Monitor
+  Serial.print("Start: "); Serial.print(buttonStart);
+  Serial.print(" | Sit: "); Serial.print(buttonSit);
+  Serial.print(" | Emergency: "); Serial.print(buttonEmergency);
+  Serial.print(" | EndSwitch1: "); Serial.print(endSwitch1);
+  Serial.print(" | EndSwitch2: "); Serial.print(endSwitch2);
+  Serial.print(" | PotRange: "); Serial.print(potRangeValue);
+  Serial.print(" | PotSpeed: "); Serial.println(potSpeedValue);
+  
+  // Test motoruitgangen:
+  // Als de startknop ingedrukt is, draai de motor voorwaarts op een half vermogen (PWM 128)
+  if (buttonStart) {
+    analogWrite(RPWM, 128);  // Voorwaarts
+    analogWrite(LPWM, 0);
+    Serial.println("Motor: Voorwaarts");
+  } else {
+    analogWrite(RPWM, 0);
+    analogWrite(LPWM, 0);
+  }
+  
+  // LED-test:
+  // LED_SUPPORT: gaat aan als de sit-knop ingedrukt is
+  if (buttonSit) {
+    digitalWrite(LED_SUPPORT, HIGH);
+  } else {
+    digitalWrite(LED_SUPPORT, LOW);
+  }
+  
+  // LED_EMERGENCY: gaat aan als de noodstop ingedrukt is
+  if (buttonEmergency) {
+    digitalWrite(LED_EMERGENCY, HIGH);
+  } else {
+    digitalWrite(LED_EMERGENCY, LOW);
+  }
+  
+  // LED_ON staat standaard aan (bij opstarten) en wordt hier niet aangepast
+  
+  delay(200); // korte pauze voor leesbaarheid in de Serial Monitor
+}
