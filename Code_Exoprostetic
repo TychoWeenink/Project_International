@@ -7,27 +7,26 @@
 #define END_SWITCH_1     8    // End switch 1 (volledig gestrekt) (D8)
 #define END_SWITCH_2     9    // End switch 2 (beginstand) (D9)
 #define RPWM             10   // R_PWM (IBT-2) (D10)
-#define LPWM             14   // L_PWM (IBT-2) (D14)
-#define POT_RANGE        A0   // Potentiometer voor stretchtijd (9-13 sec) (A0)
+#define LPWM             16   // L_PWM (IBT-2) (D16)
+#define POT_RANGE        A0   // Potentiometer voor stretchtijd (A0)
 #define POT_SPEED        A1   // Potentiometer voor motorsnelheid (A1)
 
-// Tijdinstellingen in milliseconden (9 tot 13 seconden)
 const int MIN_RUNTIME = 9000;
 const int MAX_RUNTIME = 13000;
 
-// Definieer de staten
 enum State {
   STATE_IDLE = 0,
-  STATE_EXTEND,      // Motor draait vooruit op basis van tijd
-  STATE_REVERSE_SHORT, // Motor draait 1 seconde terug na stretchtijd
-  STATE_WAIT_SIT,    // Wachten op zitknop, motor draait reverse tot beginstand
-  STATE_EMERGENCY    // Noodstop: motor stilstaan, herstelprocedure vereist
+  STATE_EXTEND,
+  STATE_REVERSE_SHORT,
+  STATE_WAIT_SIT,
+  STATE_EMERGENCY
 };
 
 State currentState = STATE_IDLE;
 unsigned long stretchStartTime = 0;
 unsigned long emergencyRecoveryStart = 0;
-int setRunTime = 0; // De ingestelde stretchtijd (afhankelijk van POT_RANGE)
+int chosenRunTime = 0;
+int chosenSpeed = 0;
 
 void setup() {
   Serial.begin(9600);
@@ -35,131 +34,96 @@ void setup() {
   pinMode(LED_SUPPORT, OUTPUT);
   pinMode(LED_EMERGENCY, OUTPUT);
   pinMode(LED_ON, OUTPUT);
-
   pinMode(BUTTON_START, INPUT_PULLUP);
   pinMode(BUTTON_SIT, INPUT_PULLUP);
   pinMode(BUTTON_EMERGENCY, INPUT_PULLUP);
-
   pinMode(END_SWITCH_1, INPUT_PULLUP);
   pinMode(END_SWITCH_2, INPUT_PULLUP);
-
   pinMode(RPWM, OUTPUT);
   pinMode(LPWM, OUTPUT);
 
-  digitalWrite(LED_ON, HIGH); // Systeem aan indicator
+  digitalWrite(LED_ON, HIGH);
 }
 
 void loop() {
-  // Lees de potentiometers
-  int potRangeValue = analogRead(POT_RANGE);
-  int potSpeedValue = analogRead(POT_SPEED);
-  // Bereken de stretchtijd op basis van POT_RANGE (tussen 9 en 13 sec)
-  setRunTime = map(potRangeValue, 0, 1023, MIN_RUNTIME, MAX_RUNTIME);
-  // Bereken de motorsnelheid op basis van POT_SPEED (0-255)
-  int motorSpeed = map(potSpeedValue, 0, 1023, 0, 255);
+  bool startPressed      = !digitalRead(BUTTON_START);
+  bool sitPressed        = !digitalRead(BUTTON_SIT);
+  bool emergencyPressed  = !digitalRead(BUTTON_EMERGENCY);
+  bool endSwitch1Pressed = !digitalRead(END_SWITCH_1);
+  bool endSwitch2Pressed = !digitalRead(END_SWITCH_2);
 
-  // Lees knoppen en eindschakelaars (actief laag)
-  bool startPressed = !digitalRead(BUTTON_START);
-  bool sitPressed = !digitalRead(BUTTON_SIT);
-  bool emergencyPressed = !digitalRead(BUTTON_EMERGENCY);
-  bool endSwitch1Pressed = !digitalRead(END_SWITCH_1); // Volledig gestrekt
-  bool endSwitch2Pressed = !digitalRead(END_SWITCH_2); // Beginstand
-
-  // Als de noodstopknop is ingedrukt, ga direct naar noodstop
   if (emergencyPressed) {
     currentState = STATE_EMERGENCY;
-    emergencyRecoveryStart = millis(); // Start timer voor herstel
+    emergencyRecoveryStart = millis();
     Serial.println("STATE_EMERGENCY: Noodstop geactiveerd");
   }
 
   switch (currentState) {
     case STATE_IDLE:
-      // Zorg dat noodstop-LED uit is
       digitalWrite(LED_EMERGENCY, LOW);
-      // Wacht op startknop en dat de motor in beginstand staat (endSwitch2 actief)
       if (startPressed && endSwitch2Pressed) {
-        // Toon potentiometerwaarden bij start
-        Serial.print("Pot_Range: "); Serial.print(potRangeValue);
-        Serial.print(" | Pot_Speed: "); Serial.println(potSpeedValue);
-        Serial.print("Stretchtijd (ms): "); Serial.println(setRunTime);
-        // Start de stretchfase
+        chosenRunTime = map(analogRead(POT_RANGE), 0, 1023, MIN_RUNTIME, MAX_RUNTIME);
+        chosenSpeed = map(analogRead(POT_SPEED), 0, 1023, 0, 255);
+        Serial.print("Gekozen stretchtijd: "); Serial.println(chosenRunTime);
+        Serial.print("Gekozen snelheid: "); Serial.println(chosenSpeed);
         stretchStartTime = millis();
         currentState = STATE_EXTEND;
-        Serial.println("STATE_EXTEND: Begin strekken");
       }
       break;
 
     case STATE_EXTEND:
-      // Motor draait vooruit op basis van de ingestelde snelheid
-      runMotor(motorSpeed);
-      // Als de stretchtijd verstreken is, ga naar de korte reverse fase
-      if (millis() - stretchStartTime >= setRunTime) {
+      runMotor(chosenSpeed);
+      if (millis() - stretchStartTime >= chosenRunTime || endSwitch1Pressed) {
         stopMotor();
-        currentState = STATE_REVERSE_SHORT;
-        Serial.println("Stretchtijd voltooid, STATE_REVERSE_SHORT: 1 sec reverse");
-      }
-      // Als de been al volledig gestrekt is (endSwitch1), maar tijd nog niet verstreken, noodstop
-      if (endSwitch1Pressed && (millis() - stretchStartTime < setRunTime)) {
-        stopMotor();
-        currentState = STATE_EMERGENCY;
-        emergencyRecoveryStart = millis();
-        Serial.println("STATE_EMERGENCY: Eindschakelaar 1 vroegtijdig geactiveerd");
+        currentState = endSwitch1Pressed ? STATE_EMERGENCY : STATE_REVERSE_SHORT;
       }
       break;
 
     case STATE_REVERSE_SHORT:
-      // Draai de motor 1 seconde in reverse
-      runMotorReverse(motorSpeed);
+      runMotorReverse(chosenSpeed);
       delay(1000);
       stopMotor();
       currentState = STATE_WAIT_SIT;
-      Serial.println("STATE_WAIT_SIT: Wachten op zitknop");
       break;
 
     case STATE_WAIT_SIT:
-      // Wacht op de zitknop; wanneer ingedrukt, draai de motor in reverse tot beginstand (endSwitch2)
+    Serial.print("STATE_WAIT_SIT");
       if (sitPressed) {
-        runMotorReverse(motorSpeed);
-        Serial.println("Motor draait terug, wacht op endSwitch2 (beginstand)");
-        // Blijf draaien tot de eindschakelaar 2 actief is
-        while (!(!digitalRead(END_SWITCH_2))) { // wachten tot endSwitch2 pressed (actief laag) is
-          // Kleine vertraging om de CPU-belasting te beperken
-          delay(50);
+        Serial.print("SIT_pressed");
+        runMotorReverse(chosenSpeed);       // geen terug
+        Serial.print("reverse");
+
+        if(!END_SWITCH_2){
+          Serial.println("END_2");
+          stopMotor();
         }
-        stopMotor();
-        Serial.println("STATE_IDLE: Beginstand bereikt, terug naar idle");
+        //while (!digitalRead(END_SWITCH_2)) {
+          //delay(50);
+         // Serial.print(".");
+        //}
+        //Serial.print("while_done");
+        //stopMotor();
+
+
         currentState = STATE_IDLE;
       }
       break;
 
     case STATE_EMERGENCY:
-      // In noodstop staat de motor stil en brandt de noodstop-LED
       stopMotor();
       digitalWrite(LED_EMERGENCY, HIGH);
-      // Herstelprocedure: als zowel de start- als de zitknop 2 seconden continu ingedrukt worden
-      if (startPressed && sitPressed) {
-        if (emergencyRecoveryStart == 0) {
-          emergencyRecoveryStart = millis();
-        } else if (millis() - emergencyRecoveryStart >= 2000) {
-          // Herstel: motor draait in reverse tot beginstand (endSwitch2) en ga naar idle
-          Serial.println("Herstel na noodstop: Motor draait in reverse tot beginstand");
-          runMotorReverse(motorSpeed);
-          while (!(!digitalRead(END_SWITCH_2))) {
-            delay(50);
-          }
-          stopMotor();
-          digitalWrite(LED_EMERGENCY, LOW);
-          currentState = STATE_IDLE;
-          Serial.println("STATE_IDLE: Herstel voltooid, terug naar idle");
-          emergencyRecoveryStart = 0;
+      if (startPressed && sitPressed && millis() - emergencyRecoveryStart >= 2000) {
+        runMotorReverse(chosenSpeed);
+        while (!digitalRead(END_SWITCH_2)) {
+          delay(50);
         }
-      } else {
-        emergencyRecoveryStart = 0;
+        stopMotor();
+        digitalWrite(LED_EMERGENCY, LOW);
+        currentState = STATE_IDLE;
       }
       break;
   }
-
-  delay(100); // Korte pauze voor stabiliteit
+  delay(100);
 }
 
 void runMotor(int speed) {
